@@ -5,3 +5,60 @@ date: "15 Mar 2015"
 output: html_document
 ---
 
+```{r requiredLibraries}
+library(dplyr)
+library(plotrix)
+```
+
+```{r fileDownload}
+if (!file.exists("repdata-data-StormData.csv.bz2")) {
+    cat("Downloading source file, please wait...\n")
+    download.file(url = "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2", 
+              destfile = "repdata-data-StormData.csv.bz2", 
+              method = "curl", 
+              quiet = TRUE)
+}
+```
+
+```{r unzipAndLoad, cache= TRUE}
+if (!exists("stormData")) {
+    cat("Unzipping source file and loading data, please wait...\n")
+    stormData <- (bzfile("repdata-data-StormData.csv.bz2"),
+                  as.is= TRUE)
+}
+```
+
+```{r dataProcessing}
+stormData$EVTYPE <- as.factor(stormData$EVTYPE)
+```
+
+```{r populationHealth}
+popHealth <- stormData %>% 
+    group_by(EVTYPE) %>% 
+    summarise(totFatalities= sum(FATALITIES), 
+              totInjuries= sum(INJURIES)) %>% 
+    arrange(desc(totFatalities), desc(totInjuries))
+
+topTen <- head(popHealth)
+```
+
+```{r healthBarPlot}
+par(mar= c(5, 9, 4, 2))
+with(topTen, 
+     gap.barplot(as.matrix(rbind(NA, totFatalities, totInjuries)), 
+                 gap= c(8000, 90000), 
+                 horiz= TRUE, 
+                 xlab= "", 
+                 ytics= c(0, 2500, 5000, 7500, 91500), 
+                 yaxt= "n", 
+                 main= "Number of fatalities and injuries by event type", 
+                 col= rep(c(NA, "red", "orange"), 30), ylab= "Total"))
+axis.break(1, 8100, style = "slash")
+axis(2, lab= topTen$EVTYPE, at= seq(2.5, 31, 3), las= 1)
+```
+
+
+
+
+
+
