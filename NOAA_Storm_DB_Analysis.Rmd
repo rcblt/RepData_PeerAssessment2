@@ -1,18 +1,35 @@
 ---
-title: "NOAA Storm Database Analysis"
+title: "Impact of Weather Events on US Population and Economics"
 author: "rcblt"
 date: "15 Mar 2015"
 output: html_document
 ---
 
+## Synopsis
+
+In this report we aim to collect and describe the most relevant weather event types with respect to population health and economic impact.
+We analyzed the U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database starting from 1996 summarizing the total number of fatalities and injuries as well as total cost of property and crop damages according to the recorded weather event type.
+Excessive heat and tornados resulted the main causes of fatalities and injuries respectively, while flood and hail caused the highest property and crop damages respectively. 
+However, the most frequent harmful and costly weather event is thunderstorm wind accounting for more of 50% of top ten event types.
+Even though the event types considered are not fully compliant with the 48 types descibed in the [database documentation](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf) the top ten event types account for more than 80% of total fatalities and injuries and 96% of property and crop damages.
+
+## Data processing
+
+### Required packages
+
+In order to perform this analysis the following R packages must be installed and loaded:
+
 ```{r requiredLibraries}
 library(dplyr)
-library(plotrix)
+#library(plotrix)
 ```
+
+### Raw data download
+
+From the [NOAA storm database](https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2) we obtained the raw data to be analyzed. If the file `repdata-data-StormData.csv.bz2` is not present in the current working directory then it will be downloaded.
 
 ```{r fileDownload}
 if (!file.exists("repdata-data-StormData.csv.bz2")) {
-    cat("Downloading source file, please wait...\n")
     download.file(url = "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2", 
               destfile = "repdata-data-StormData.csv.bz2", 
               method = "curl", 
@@ -20,45 +37,383 @@ if (!file.exists("repdata-data-StormData.csv.bz2")) {
 }
 ```
 
+### Reading in raw data
+
+First, we read the raw data from the `repdata-data-StormData.csv.bz2` compressed file directly into the data frame  `stormData`.
+
 ```{r unzipAndLoad, cache= TRUE}
-if (!exists("stormData")) {
-    cat("Unzipping source file and loading data, please wait...\n")
-    stormData <- (bzfile("repdata-data-StormData.csv.bz2"),
-                  as.is= TRUE)
-}
+stormData <- read.csv(bzfile("repdata-data-StormData.csv.bz2"), 
+                      as.is= TRUE)
 ```
 
-```{r dataProcessing}
-stormData$EVTYPE <- as.factor(stormData$EVTYPE)
+### Date format conversion
+
+Second, we converted the column `BGN_DATE` from character to the POSIXct date format:
+
+```{r dataProcessing, cache= TRUE}
+# Add date column as POSIXct
+stormData <- stormData %>% 
+    mutate(beginDate= as.POSIXct(BGN_DATE, format= "%m/%d/%Y"))
 ```
+
+### Considering reliable data only
+
+Data before 1996 are considered not reliable as they were recorded according to differet rules. The data frame `reliableStormData` contains events later than Dec. 31st, 1995 only. 
+
+```{r reliableData, cache= TRUE}
+# Filter out data from non-reliable years
+reliableStormData <- stormData %>% 
+    filter(beginDate > "1995-12-31")
+```
+
+### Considering harmful data only
+
+As they are not relevant for this analysis we filtered out all events that did not resulted in any effect on population health or economic consequences. The data frame `harmfulData` contains such data:
+
+```{r harmfulData, cache= TRUE}
+# Filter out records non relevant for population health or economics
+harmfulStormData <- reliableStormData %>% 
+    filter(FATALITIES > 0 | 
+               INJURIES > 0 | 
+               PROPDMG > 0 | 
+               CROPDMG > 0)
+```
+
+### Property and crop damage costs in USD
+
+In order to compute summary statistics we need damage costs in USD. We added columns `propertyDamage`and `cropDamage` combining the values in columns `PROPDMG`-`PROPDMGEXP` and `CROPDMG`-`CROPDMGEXP` respectively (see database documentation for description of these fields):
+
+```{r additionalColumns}
+# Add columns with expanded property and crop damage costs
+harmfulStormData <- harmfulStormData %>% 
+    mutate(propertyDamage= PROPDMG)
+harmfulStormData <- harmfulStormData %>% 
+    mutate(propertyDamage= ifelse(PROPDMGEXP== 'K', 
+                                  PROPDMG*1000, 
+                                  propertyDamage)
+           )
+harmfulStormData <- harmfulStormData %>% 
+    mutate(propertyDamage= ifelse(PROPDMGEXP== 'M', 
+                                  PROPDMG*1000000, 
+                                  propertyDamage)
+           )
+harmfulStormData <- harmfulStormData %>% 
+    mutate(propertyDamage= ifelse(PROPDMGEXP== 'B', 
+                                  PROPDMG*1000000000, 
+                                  propertyDamage)
+           )
+harmfulStormData <- harmfulStormData %>% 
+    mutate(cropDamage= CROPDMG)
+harmfulStormData <- harmfulStormData %>% 
+    mutate(cropDamage= ifelse(CROPDMGEXP== 'K', 
+                                  PROPDMG*1000, 
+                                  cropDamage)
+           )
+harmfulStormData <- harmfulStormData %>% 
+    mutate(cropDamage= ifelse(CROPDMGEXP== 'M', 
+                                  PROPDMG*1000000, 
+                                  cropDamage)
+           )
+harmfulStormData <- harmfulStormData %>% 
+    mutate(cropDamage= ifelse(CROPDMGEXP== 'B', 
+                                  PROPDMG*1000000000, 
+                                  cropDamage)
+           )
+```
+
+### Cleaning data
+
+Column `EVTYPE` is used to classify the recorded weather events. As not all records are compliant with the database documentation we changed values in this column to the (supposedly) corrected ones for those records that resulted to have an impact on the top ten most important types.
+
+First, we turned all `EVTYPE` values to uppercase and removed leading and trailing white spaces.
+
+```{r dataTidying1, cache= TRUE}
+# All event types to uppercase
+harmfulStormData <- harmfulStormData %>% 
+    mutate(EVTYPE= toupper(EVTYPE))
+# Trim leading and trailing spaces
+harmfulStormData <- harmfulStormData %>%
+    mutate(EVTYPE= sub('^\\s+', '', EVTYPE))
+harmfulStormData <- harmfulStormData %>%
+    mutate(EVTYPE= sub('\\s+$', '', EVTYPE))
+```
+
+Then, `EVTYPE` values related to wind, floods, rip current, heat, hurricane/typhoon, storm surge and hail have been fixed.
+
+```{r dataTidying2, cache= TRUE}
+#########################
+# Fix wind-related EVTYPE
+#########################
+# STRONG WIND
+harmfulStormData <- harmfulStormData %>% 
+    mutate(EVTYPE= gsub('^STRONG.+WIND.*', 'STRONG WIND', EVTYPE)
+           )
+# GUSTY WIND
+harmfulStormData <- harmfulStormData %>% 
+    mutate(EVTYPE= gsub('^GUSTY.+WIND.*', 'STRONG WIND', EVTYPE)
+           )
+# NON TSTM WIND
+harmfulStormData <- harmfulStormData %>% 
+    mutate(EVTYPE= gsub('^NON.TSTM.+WIND.*', 'STRONG WIND', EVTYPE)
+           )
+# TSTM WIND
+harmfulStormData <- harmfulStormData %>% 
+    mutate(EVTYPE= gsub('^TSTM.*', 'THUNDERSTORM WIND', EVTYPE)
+           )
+# THUNDERSTORM WIND
+harmfulStormData <- harmfulStormData %>% 
+    mutate(EVTYPE= gsub('^THUNDERSTORM WIND.*', 'THUNDERSTORM WIND', EVTYPE)
+           )
+# HIGH WIND
+harmfulStormData <- harmfulStormData %>% 
+    mutate(EVTYPE= gsub('^HIGH.+WIND.*', 'HIGH WIND', EVTYPE)
+           )
+harmfulStormData <- harmfulStormData %>% 
+    mutate(EVTYPE= gsub('^WINDS$', 'HIGH WIND', EVTYPE)
+           )
+harmfulStormData <- harmfulStormData %>% 
+    mutate(EVTYPE= gsub('^WIND.+DAMAGE$', 'HIGH WIND', EVTYPE)
+           )
+harmfulStormData <- harmfulStormData %>% 
+    mutate(EVTYPE= gsub('^WIND$', 'HIGH WIND', EVTYPE)
+           )
+harmfulStormData <- harmfulStormData %>% 
+    mutate(EVTYPE= gsub('^NON-SEVERE.+WIND', 'HIGH WIND', EVTYPE)
+           )
+# MARINE THUNDERSTORM WIND
+harmfulStormData <- harmfulStormData %>% 
+    mutate(EVTYPE= gsub('^MARINE.+TSTM.+WIND.*', 'MARINE THUNDERSTORM WIND', EVTYPE)
+           )
+#########################
+# Fix floods EVTYPE
+#########################
+# FLASH FLOOD
+harmfulStormData <- harmfulStormData %>% 
+    mutate(EVTYPE= gsub('.*FLASH.+FLOOD.*', 'FLASH FLOOD', EVTYPE)
+           )
+# RIVER FLOOD
+harmfulStormData <- harmfulStormData %>% 
+    mutate(EVTYPE= gsub('.*RIVER.+FLOOD.*', 'FLOOD', EVTYPE)
+           )
+harmfulStormData <- harmfulStormData %>% 
+    mutate(EVTYPE= gsub('.*ICE JAM FLOOD.*', 'FLOOD', EVTYPE)
+           )
+# COASTAL FLOOD
+harmfulStormData <- harmfulStormData %>% 
+    mutate(EVTYPE= gsub('.*COASTAL.+FLOOD.*', 'COASTAL FLOOD', EVTYPE)
+           )
+# TIDAL FLOOD
+harmfulStormData <- harmfulStormData %>% 
+    mutate(EVTYPE= gsub('.*TIDAL.+FLOOD.*', 'COASTAL FLOOD', EVTYPE)
+           )
+# EROSION FLOOD
+harmfulStormData <- harmfulStormData %>% 
+    mutate(EVTYPE= gsub('.*EROSION.+FLOOD.*', 'COASTAL FLOOD', EVTYPE)
+           )
+
+#########################
+# Fix rip current EVTYPE
+#########################
+harmfulStormData <- harmfulStormData %>% 
+    mutate(EVTYPE= gsub('.*RIP.+CURRENT.*', 'RIP CURRENT', EVTYPE)
+           )
+#########################
+# Fix heat related EVTYPE
+#########################
+harmfulStormData <- harmfulStormData %>% 
+    mutate(EVTYPE= gsub('.*RECORD.+HEAT.*', 'EXCESSIVE HEAT', EVTYPE)
+           )
+harmfulStormData <- harmfulStormData %>% 
+    mutate(EVTYPE= gsub('.*HEAT.+WAVE.*', 'HEAT', EVTYPE)
+           )
+#########################
+# Fix hurricane/typhoon related EVTYPE
+#########################
+harmfulStormData <- harmfulStormData %>% 
+    mutate(EVTYPE= gsub('.*HURRICANE.*', 'HURRICANE/TYPHOON', EVTYPE)
+           )
+#########################
+# Fix storm surge related EVTYPE
+#########################
+harmfulStormData <- harmfulStormData %>% 
+    mutate(EVTYPE= gsub('.*STORM +SURGE.*', 'STORM SURGE', EVTYPE)
+           )
+#########################
+# Fix hail related EVTYPE
+#########################
+harmfulStormData <- harmfulStormData %>% 
+    mutate(EVTYPE= gsub('.*SMALL +HAIL.*', 'HAIL', EVTYPE)
+           )
+```
+
+### Summary of impact on population health
+
+In order to get summary statistics of impact of population health we created the `populationHealth` data frame grouping `harmfulStormData` by `EVTYPE` and summing up the number of fatalities and injuries. Also, the total number of recorded events for each type is collected.
+
+Then, we computed the frequency of each event type and ordered the resulting data frame in descending order by fatalities and injuries. Finally, we took the first ten rows for downstream plots.
 
 ```{r populationHealth}
-popHealth <- stormData %>% 
+populationHealth <- harmfulStormData %>% 
     group_by(EVTYPE) %>% 
-    summarise(totFatalities= sum(FATALITIES), 
-              totInjuries= sum(INJURIES)) %>% 
-    arrange(desc(totFatalities), desc(totInjuries))
-
-topTen <- head(popHealth)
+    summarise(totalFatalities= sum(FATALITIES), 
+              totalInjuries= sum(INJURIES),
+              totalNum= n())
+populationHealth <- cbind(populationHealth, 
+                          totalFrequency= prop.table(populationHealth$totalNum))
+populationHealth <- populationHealth %>%
+    arrange(desc(totalFatalities), 
+            desc(totalInjuries))
+topTenHealth <- head(populationHealth, 10)
 ```
+
+### Summary of impact on economics
+
+Similarly to what has been done for population health we created the data frame `economicalConsequences` containing property and crop damage costs for each event type as well as the total number and frequency of events. 
+
+The data frame `topTenEconomics` contain the ten most costly event types used for the following plots.
+
+```{r economicaConsequences}
+economicConsequences <- harmfulStormData %>% 
+    group_by(EVTYPE) %>% 
+    summarise(totalPropertyDamage= sum(propertyDamage), 
+              totalCropDamage= sum(cropDamage),
+              totalNum= n()) 
+economicConsequences <- cbind(economicConsequences, 
+                          totalFrequency= prop.table(economicConsequences$totalNum))
+economicConsequences <- economicConsequences %>% 
+    arrange(desc(totalPropertyDamage), 
+            desc(totalCropDamage))
+topTenEconomic <- head(economicConsequences, 10)
+```
+
+## Results
+
+### Top ten harmful event types
+
+In order to show the most harmful weather events we made a barplot of the total number of fatalities and injuries of the ten most impactful events. For each event the relative frequency is also shown on a percentage scale.
+
+The most relevant event type in terms of fatalities is **excessive heat** with 1799 deaths while the greatest number of injuries -more than 20.000- are caused by **tornados**. The most frequent event is **thunderstorm wind** that happened more that 52% of the times.
 
 ```{r healthBarPlot}
-par(mar= c(5, 9, 4, 2))
-with(topTen, 
-     gap.barplot(as.matrix(rbind(NA, totFatalities, totInjuries)), 
-                 gap= c(8000, 90000), 
-                 horiz= TRUE, 
-                 xlab= "", 
-                 ytics= c(0, 2500, 5000, 7500, 91500), 
-                 yaxt= "n", 
-                 main= "Number of fatalities and injuries by event type", 
-                 col= rep(c(NA, "red", "orange"), 30), ylab= "Total"))
-axis.break(1, 8100, style = "slash")
-axis(2, lab= topTen$EVTYPE, at= seq(2.5, 31, 3), las= 1)
+maxInjuries <- max(topTenHealth$totalInjuries)
+par(mar= c(5, 11, 4, 2))
+with(topTenHealth, 
+     barplot(rbind(totalFatalities, 
+                   totalInjuries, 
+                   totalFrequency*maxInjuries),
+             horiz= TRUE, 
+             beside= TRUE, 
+             xlab= "Total",
+             col= c("darkblue", "lightgrey", "red"))
+     )
+title(main= "Top ten event types for fatalities and injuries",
+      line= 2.5
+    )
+legend("topright", 
+       legend= c("Fatalities", "Injuries", "Frequency"), 
+       fill= c("darkblue", "lightgrey", "red")
+       )
+axis(2, 
+     lab= topTenHealth$EVTYPE, 
+     at= seq(2.5, 41, 4), 
+     las= 1)
+axis(3, 
+     lab= paste(seq(0, 100, 10), '%', sep= ''), 
+     at= seq(0, 20000, 2000), 
+     col= "red"
+     )
 ```
 
+Table of the ten most harmful event types:
 
+```{r topTenHealth, comment= ''}
+topTenHealth %>% 
+    select(EVTYPE, totalFatalities, totalInjuries, totalFrequency) %>%
+    mutate(totalFrequency= round(totalFrequency*100, 2))
+```
 
+### Top ten higher economic impact event types
 
+Similarly, we made a barplot of the total damage costs on properties and crops of the ten most impactful events. For each event the relative frequency is also shown on a percentage scale.
 
+In this case, the most relevant event type in terms of property damage cost is **flood** that caused more than 140 billion USD while **hail** caused the greatest crop damage costs for a total of more than 39 billion USD. The most frequent event is again **thunderstorm wind** that happened more that 52% of the times.
 
+```{r economicBarPlot}
+maxPropertyDamage <- max(topTenEconomic$totalPropertyDamage)
+par(mar= c(5, 11, 4, 2))
+with(topTenEconomic, 
+     barplot(rbind(totalPropertyDamage, 
+                   totalCropDamage, 
+                   totalFrequency*maxPropertyDamage),
+             horiz= TRUE, 
+             beside= TRUE, 
+             xaxt= "n",
+             xlab= "Total (Billion USD)",
+             col= c("darkblue", "lightgrey", "red"))
+     )
+title(main= "Top ten event types for of property and crop damages",
+      line= 2.5
+    )
+legend("topright", 
+       legend= c("Property Damage", "Crop Damage", "Frequency"), 
+       fill= c("darkblue", "lightgrey", "red")
+       )
+axis(1, 
+     lab= seq(0, 140, 20), 
+     at= seq(0, 1.4e+11, 2e+10), 
+     las= 1)
+axis(2, 
+     lab= topTenEconomic$EVTYPE, 
+     at= seq(2.5, 41, 4), 
+     las= 1)
+axis(3, 
+     lab= paste(seq(0, 100, 10), '%', sep= ''), 
+     at= seq(0, maxPropertyDamage, maxPropertyDamage/10), 
+     col= "red"
+     )
+```
+
+Table of the ten most harmful event types (total costs in B$):
+
+```{r topTenEconomics, comment= ''}
+topTenEconomic %>% 
+    select(EVTYPE, 
+           totalPropertyDamage, 
+           totalCropDamage, 
+           totalFrequency) %>%
+    mutate(totalPropertyDamage= round(totalPropertyDamage/1e+9, 2),
+           totalCropDamage= round(totalCropDamage/1e+9, 2), 
+           totalFrequency= round(totalFrequency*100, 2)
+           )
+```
+
+### Proportion of top ten summaries vs. total
+
+Finally, we investigated the proportion of the ten most harmful and costly event types with respect to the total reported in the database.
+
+The ten most harmful event types account for more 82% of all fatalities and injuries. The ten most costly event types results in more than 96% of total costs.
+
+```{r topTenProportion, fig.width= 10}
+par(mfrow= c(1, 2))
+totFI <- sum(populationHealth$totalFatalities) + sum(populationHealth$totalInjuries)
+totTopFI <- sum(topTenHealth$totalInjuries) + sum(topTenHealth$totalFatalities)
+pie(c(totTopFI, totFI-totTopFI), 
+    lab= c(paste("Top Ten", round(totTopFI/totFI*100, 2), '%'), 
+           paste("Other", round((totFI-totTopFI)/totFI*100, 2), '%')),
+    col= c("darkorange", "lightgrey"),
+    main= "Proportion of top ten harmful events"
+    )
+
+totPC <- sum(economicConsequences$totalPropertyDamage) + sum(economicConsequences$totalCropDamage)
+topTotPC <- sum(topTenEconomic$totalPropertyDamage) + sum(topTenEconomic$totalCropDamage)
+pie(c(topTotPC, totPC-topTotPC), 
+    lab= c(paste("Top Ten", round(topTotPC/totPC*100, 2), '%'), 
+           paste("Other", round((totPC-topTotPC)/totPC*100, 2), '%')),
+    col= c("darkorange", "lightgrey"),
+    main= "Proportion of top ten economic consequences"
+    )
+```
+
+## Conclusions
+
+Starting from the NOAA storm database we analyzed data from 1996 and we showed that it is possible to identify the most impactful event types in terms of population health and economic consequences. Excessive heat and tornados are the event types to consider first in order to reduce fatalities and injuries, while flood and hurricane/typhoon are the events that caused the gratest economic loss in terms of property and crop damages. However, the most frequent recorded event is thunderstorm wind. Taking action on the top ten most important events would reduce the vast majority of consequences both on population health and on economics.
